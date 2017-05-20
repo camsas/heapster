@@ -10,3 +10,6 @@ Session.vim
 .netrwhist
 .idea
 *manifest-tool
+
+# Intellij generated files
+*.iml

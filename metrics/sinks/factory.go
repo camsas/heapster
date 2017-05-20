@@ -31,6 +31,7 @@ import (
 	logsink "k8s.io/heapster/metrics/sinks/log"
 	metricsink "k8s.io/heapster/metrics/sinks/metric"
 	"k8s.io/heapster/metrics/sinks/opentsdb"
+	"k8s.io/heapster/metrics/sinks/poseidon"
 	"k8s.io/heapster/metrics/sinks/riemann"
 	"k8s.io/heapster/metrics/sinks/stackdriver"
 	"k8s.io/heapster/metrics/sinks/wavefront"
@@ -69,6 +70,8 @@ func (this *SinkFactory) Build(uri flags.Uri) (core.DataSink, error) {
 		return wavefront.NewWavefrontSink(&uri.Val)
 	case "riemann":
 		return riemann.CreateRiemannSink(&uri.Val)
+	case "poseidon":
+		return poseidon.NewPoseidonSink(&uri.Val)
 	default:
 		return nil, fmt.Errorf("Sink not recognized: %s", uri.Key)
 	}
