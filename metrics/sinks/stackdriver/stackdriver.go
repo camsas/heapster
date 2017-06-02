@@ -17,6 +17,7 @@ package stackdriver
 import (
 	"fmt"
 	"net/url"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -39,6 +40,7 @@ type StackdriverSink struct {
 	project           string
 	zone              string
 	stackdriverClient *sd_api.Service
+	requestQueue      chan *sd_api.CreateTimeSeriesRequest
 }
 
 type metricMetadata struct {
@@ -138,7 +140,19 @@ func (sink *StackdriverSink) Name() string {
 }
 
 func (sink *StackdriverSink) Stop() {
-	// nothing needs to be done
+	close(sink.requestQueue)
+}
+
+func (sink *StackdriverSink) processMetrics(metricValues map[string]core.MetricValue,
+	timestamp time.Time, labels map[string]string, createTime time.Time) []*sd_api.TimeSeries {
+	timeseries := make([]*sd_api.TimeSeries, 0)
+	for name, value := range metricValues {
+		ts := sink.TranslateMetric(timestamp, labels, name, value, createTime)
+		if ts != nil {
+			timeseries = append(timeseries, ts)
+		}
+	}
+	return timeseries
 }
 
 func (sink *StackdriverSink) ExportData(dataBatch *core.DataBatch) {
@@ -154,16 +168,17 @@ func (sink *StackdriverSink) ExportData(dataBatch *core.DataBatch) {
 			metricSet.Labels[core.LabelContainerName.Key] = "machine"
 		}
 
-		sink.preprocessMemoryMetrics(metricSet)
+		computedMetrics := sink.preprocessMemoryMetrics(metricSet)
 
-		for name, value := range metricSet.MetricValues {
-			point := sink.TranslateMetric(dataBatch.Timestamp, metricSet.Labels, name, value, metricSet.CreateTime)
+		computedTimeseries := sink.processMetrics(computedMetrics.MetricValues, dataBatch.Timestamp, metricSet.Labels, metricSet.CreateTime)
+		timeseries := sink.processMetrics(metricSet.MetricValues, dataBatch.Timestamp, metricSet.Labels, metricSet.CreateTime)
 
-			if point != nil {
-				req.TimeSeries = append(req.TimeSeries, point)
-			}
+		timeseries = append(timeseries, computedTimeseries...)
+
+		for _, ts := range timeseries {
+			req.TimeSeries = append(req.TimeSeries, ts)
 			if len(req.TimeSeries) >= maxTimeseriesPerRequest {
-				sink.sendRequest(req)
+				sink.requestQueue <- req
 				req = getReq()
 			}
 		}
@@ -175,14 +190,14 @@ func (sink *StackdriverSink) ExportData(dataBatch *core.DataBatch) {
 				req.TimeSeries = append(req.TimeSeries, point)
 			}
 			if len(req.TimeSeries) >= maxTimeseriesPerRequest {
-				sink.sendRequest(req)
+				sink.requestQueue <- req
 				req = getReq()
 			}
 		}
 	}
 
 	if len(req.TimeSeries) > 0 {
-		sink.sendRequest(req)
+		sink.requestQueue <- req
 	}
 }
 
@@ -192,6 +207,20 @@ func CreateStackdriverSink(uri *url.URL) (core.DataSink, error) {
 	}
 	if len(uri.Host) > 0 {
 		return nil, fmt.Errorf("Host should not be set for Stackdriver sink")
+	}
+
+	opts := uri.Query()
+	var (
+		workers int
+		err     error
+	)
+	if len(opts["workers"]) >= 1 {
+		workers, err = strconv.Atoi(opts["workers"][0])
+		if err != nil {
+			return nil, fmt.Errorf("Number of workers should be an integer, found: %v", opts["workers"][0])
+		}
+	} else {
+		workers = 1
 	}
 
 	if err := gce_util.EnsureOnGCE(); err != nil {
@@ -217,19 +246,39 @@ func CreateStackdriverSink(uri *url.URL) (core.DataSink, error) {
 		return nil, err
 	}
 
+	requestQueue := make(chan *sd_api.CreateTimeSeriesRequest)
+
 	sink := &StackdriverSink{
 		project:           projectId,
 		zone:              zone,
 		stackdriverClient: stackdriverClient,
+		requestQueue:      requestQueue,
 	}
 
 	// Register sink metrics
 	prometheus.MustRegister(requestsSent)
 	prometheus.MustRegister(timeseriesSent)
 
-	glog.Infof("Created Stackdriver sink")
+	// Launch Go routines responsible for sending requests
+	for i := 0; i < workers; i++ {
+		go sink.requestSender(sink.requestQueue)
+	}
+
+	glog.Infof("Created Stackdriver sink, number of workers sending requests to Stackdriver: %v", workers)
 
 	return sink, nil
+}
+
+func (sink *StackdriverSink) requestSender(queue chan *sd_api.CreateTimeSeriesRequest) {
+	for {
+		select {
+		case req, active := <-queue:
+			if !active {
+				return
+			}
+			sink.sendRequest(req)
+		}
+	}
 }
 
 func (sink *StackdriverSink) sendRequest(req *sd_api.CreateTimeSeriesRequest) {
@@ -238,7 +287,12 @@ func (sink *StackdriverSink) sendRequest(req *sd_api.CreateTimeSeriesRequest) {
 	var responseCode int
 	if err != nil {
 		glog.Errorf("Error while sending request to Stackdriver %v", err)
-		responseCode = err.(*googleapi.Error).Code
+		switch reflect.Indirect(reflect.ValueOf(err)).Type() {
+		case reflect.Indirect(reflect.ValueOf(&googleapi.Error{})).Type():
+			responseCode = err.(*googleapi.Error).Code
+		default:
+			responseCode = -1
+		}
 	} else {
 		responseCode = empty.ServerResponse.HTTPStatusCode
 	}
@@ -249,14 +303,18 @@ func (sink *StackdriverSink) sendRequest(req *sd_api.CreateTimeSeriesRequest) {
 		Add(float64(len(req.TimeSeries)))
 }
 
-func (sink *StackdriverSink) preprocessMemoryMetrics(metricSet *core.MetricSet) {
+func (sink *StackdriverSink) preprocessMemoryMetrics(metricSet *core.MetricSet) *core.MetricSet {
 	usage := metricSet.MetricValues[core.MetricMemoryUsage.MetricDescriptor.Name].IntValue
 	workingSet := metricSet.MetricValues[core.MetricMemoryWorkingSet.MetricDescriptor.Name].IntValue
 	bytesUsed := core.MetricValue{
 		IntValue: usage - workingSet,
 	}
 
-	metricSet.MetricValues["memory/bytes_used"] = bytesUsed
+	newMetricSet := &core.MetricSet{
+		MetricValues: map[string]core.MetricValue{},
+	}
+
+	newMetricSet.MetricValues["memory/bytes_used"] = bytesUsed
 
 	memoryFaults := metricSet.MetricValues[core.MetricMemoryPageFaults.MetricDescriptor.Name].IntValue
 	majorMemoryFaults := metricSet.MetricValues[core.MetricMemoryMajorPageFaults.MetricDescriptor.Name].IntValue
@@ -264,7 +322,9 @@ func (sink *StackdriverSink) preprocessMemoryMetrics(metricSet *core.MetricSet) 
 	minorMemoryFaults := core.MetricValue{
 		IntValue: memoryFaults - majorMemoryFaults,
 	}
-	metricSet.MetricValues["memory/minor_page_faults"] = minorMemoryFaults
+	newMetricSet.MetricValues["memory/minor_page_faults"] = minorMemoryFaults
+
+	return newMetricSet
 }
 
 func (sink *StackdriverSink) TranslateLabeledMetric(timestamp time.Time, labels map[string]string, metric core.LabeledMetric, createTime time.Time) *sd_api.TimeSeries {
@@ -291,6 +351,10 @@ func (sink *StackdriverSink) TranslateLabeledMetric(timestamp time.Time, labels 
 
 func (sink *StackdriverSink) TranslateMetric(timestamp time.Time, labels map[string]string, name string, value core.MetricValue, createTime time.Time) *sd_api.TimeSeries {
 	resourceLabels := sink.getResourceLabels(labels)
+	if !createTime.Before(timestamp) {
+		glog.V(4).Infof("Error translating metric %v for pod %v: batch timestamp %v earlier than pod create time %v", name, labels["pod_name"], timestamp, createTime)
+		return nil
+	}
 	switch name {
 	case core.MetricUptime.MetricDescriptor.Name:
 		doubleValue := float64(value.IntValue) / float64(time.Second/time.Millisecond)

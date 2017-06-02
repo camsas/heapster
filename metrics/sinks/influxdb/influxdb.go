@@ -35,6 +35,13 @@ type influxdbSink struct {
 	dbExists bool
 }
 
+var influxdbBlacklistLabels = map[string]struct{}{
+	core.LabelPodNamespaceUID.Key: {},
+	core.LabelPodId.Key:           {},
+	core.LabelHostname.Key:        {},
+	core.LabelHostID.Key:          {},
+}
+
 const (
 	// Value Field name
 	valueField = "value"
@@ -82,12 +89,22 @@ func (sink *influxdbSink) ExportData(dataBatch *core.DataBatch) {
 
 			point := influxdb.Point{
 				Measurement: measurementName,
-				Tags:        metricSet.Labels,
+				Tags:        make(map[string]string, len(metricSet.Labels)),
 				Fields: map[string]interface{}{
 					fieldName: value,
 				},
 				Time: dataBatch.Timestamp.UTC(),
 			}
+			for key, value := range metricSet.Labels {
+				if _, exists := influxdbBlacklistLabels[key]; !exists {
+					if value != "" {
+						point.Tags[key] = value
+					}
+				}
+			}
+
+			point.Tags["cluster_name"] = sink.c.ClusterName
+
 			dataPoints = append(dataPoints, point)
 			if len(dataPoints) >= maxSendBatchSize {
 				sink.sendData(dataPoints)
@@ -120,18 +137,26 @@ func (sink *influxdbSink) ExportData(dataBatch *core.DataBatch) {
 
 			point := influxdb.Point{
 				Measurement: measurementName,
-				Tags:        make(map[string]string),
+				Tags:        make(map[string]string, len(metricSet.Labels)+len(labeledMetric.Labels)),
 				Fields: map[string]interface{}{
 					fieldName: value,
 				},
 				Time: dataBatch.Timestamp.UTC(),
 			}
+
 			for key, value := range metricSet.Labels {
-				point.Tags[key] = value
+				if value != "" {
+					point.Tags[key] = value
+				}
 			}
 			for key, value := range labeledMetric.Labels {
-				point.Tags[key] = value
+				if _, exists := influxdbBlacklistLabels[key]; !exists {
+					if value != "" {
+						point.Tags[key] = value
+					}
+				}
 			}
+			point.Tags["cluster_name"] = sink.c.ClusterName
 
 			dataPoints = append(dataPoints, point)
 			if len(dataPoints) >= maxSendBatchSize {
