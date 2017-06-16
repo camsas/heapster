@@ -38,12 +38,12 @@ func (sink *PoseidonSink) ProcessNodeStats(nodeMetrics *core.MetricSet) {
 	glog.V(2).Infoln("ProcessNodeStats called...")
 	nodeStats := &stats.NodeStats{
 		Hostname:       nodeMetrics.Labels[core.LabelHostname.Key],
-		CpuAllocatable: float64(getMetricValue(nodeMetrics, core.MetricNodeCpuAllocatable).FloatValue),
-		CpuCapacity:    float64(getMetricValue(nodeMetrics, core.MetricNodeCpuCapacity).FloatValue),
+		CpuAllocatable: int64(getMetricValue(nodeMetrics, core.MetricNodeCpuAllocatable).FloatValue),
+		CpuCapacity:    int64(getMetricValue(nodeMetrics, core.MetricNodeCpuCapacity).FloatValue),
 		CpuReservation: float64(getMetricValue(nodeMetrics, core.MetricNodeCpuReservation).FloatValue),
 		CpuUtilization: float64(getMetricValue(nodeMetrics, core.MetricNodeCpuUtilization).FloatValue),
-		MemAllocatable: float64(getMetricValue(nodeMetrics, core.MetricNodeMemoryAllocatable).FloatValue),
-		MemCapacity:    float64(getMetricValue(nodeMetrics, core.MetricNodeMemoryCapacity).FloatValue),
+		MemAllocatable: int64(getMetricValue(nodeMetrics, core.MetricNodeMemoryAllocatable).FloatValue / KILOBYTE),
+		MemCapacity:    int64(getMetricValue(nodeMetrics, core.MetricNodeMemoryCapacity).FloatValue / KILOBYTE),
 		MemReservation: float64(getMetricValue(nodeMetrics, core.MetricNodeMemoryReservation).FloatValue),
 		MemUtilization: float64(getMetricValue(nodeMetrics, core.MetricNodeMemoryUtilization).FloatValue),
 	}
