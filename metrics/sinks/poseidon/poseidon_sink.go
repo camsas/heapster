@@ -38,7 +38,7 @@ func (sink *PoseidonSink) ProcessNodeStats(nodeMetrics *core.MetricSet) {
 	glog.V(2).Infoln("ProcessNodeStats called...")
 	nodeStats := &stats.NodeStats{
 		Hostname:       nodeMetrics.Labels[core.LabelHostname.Key],
-		Timestamp:      nodeMetrics.ScrapeTime.UnixNano() / int64(time.Microsecond),
+		Timestamp:      uint64(nodeMetrics.ScrapeTime.UnixNano()) / uint64(time.Microsecond),
 		CpuAllocatable: int64(getMetricValue(nodeMetrics, core.MetricNodeCpuAllocatable).FloatValue),
 		CpuCapacity:    int64(getMetricValue(nodeMetrics, core.MetricNodeCpuCapacity).FloatValue),
 		CpuReservation: float64(getMetricValue(nodeMetrics, core.MetricNodeCpuReservation).FloatValue),
