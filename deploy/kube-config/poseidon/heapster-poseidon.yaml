@@ -46,6 +46,7 @@ spec:
         image: camsas/heapster:dev
         command:
         - /heapster
+        - --metric-resolution=0m10s
         - --source=kubernetes:https://kubernetes.default
         - --sink=poseidon:http://poseidon.kube-system:9091
         - --v=2
