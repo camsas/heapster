@@ -43,11 +43,11 @@ spec:
       serviceAccountName: heapster
       containers:
       - name: heapster
-        image: camsas/heapster
+        image: camsas/heapster:dev
         command:
         - /heapster
         - --source=kubernetes:https://kubernetes.default
-        - --sink=poseidon:http://10.145.208.153:9232
+        - --sink=poseidon:http://poseidon.kube-system:9091
         - --v=2
 ---
 apiVersion: v1
