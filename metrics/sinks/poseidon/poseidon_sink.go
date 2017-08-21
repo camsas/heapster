@@ -8,6 +8,7 @@ import (
 	"k8s.io/heapster/metrics/core"
 	"k8s.io/heapster/metrics/sinks/poseidon/stats"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -37,16 +38,17 @@ func (sink *PoseidonSink) Stop() {
 func (sink *PoseidonSink) ProcessNodeStats(nodeMetrics *core.MetricSet) {
 	glog.V(2).Infoln("ProcessNodeStats called...")
 	nodeStats := &stats.NodeStats{
-		Hostname:       nodeMetrics.Labels[core.LabelHostname.Key],
-		Timestamp:      uint64(nodeMetrics.ScrapeTime.UnixNano()) / uint64(time.Microsecond),
-		CpuAllocatable: int64(getMetricValue(nodeMetrics, core.MetricNodeCpuAllocatable).FloatValue),
-		CpuCapacity:    int64(getMetricValue(nodeMetrics, core.MetricNodeCpuCapacity).FloatValue),
-		CpuReservation: float64(getMetricValue(nodeMetrics, core.MetricNodeCpuReservation).FloatValue),
-		CpuUtilization: float64(getMetricValue(nodeMetrics, core.MetricNodeCpuUtilization).FloatValue),
-		MemAllocatable: int64(getMetricValue(nodeMetrics, core.MetricNodeMemoryAllocatable).FloatValue / KILOBYTE),
-		MemCapacity:    int64(getMetricValue(nodeMetrics, core.MetricNodeMemoryCapacity).FloatValue / KILOBYTE),
-		MemReservation: float64(getMetricValue(nodeMetrics, core.MetricNodeMemoryReservation).FloatValue),
-		MemUtilization: float64(getMetricValue(nodeMetrics, core.MetricNodeMemoryUtilization).FloatValue),
+		Hostname:           nodeMetrics.Labels[core.LabelHostname.Key],
+		Timestamp:          uint64(nodeMetrics.ScrapeTime.UnixNano()) / uint64(time.Microsecond),
+		CpuAllocatable:     int64(getMetricValue(nodeMetrics, core.MetricNodeCpuAllocatable).FloatValue),
+		CpuCapacity:        int64(getMetricValue(nodeMetrics, core.MetricNodeCpuCapacity).FloatValue),
+		CpuReservation:     float64(getMetricValue(nodeMetrics, core.MetricNodeCpuReservation).FloatValue),
+		CpuUtilization:     float64(getMetricValue(nodeMetrics, core.MetricNodeCpuUtilization).FloatValue),
+		MemAllocatable:     int64(getMetricValue(nodeMetrics, core.MetricNodeMemoryAllocatable).FloatValue / KILOBYTE),
+		MemCapacity:        int64(getMetricValue(nodeMetrics, core.MetricNodeMemoryCapacity).FloatValue / KILOBYTE),
+		MemReservation:     float64(getMetricValue(nodeMetrics, core.MetricNodeMemoryReservation).FloatValue),
+		MemUtilization:     float64(getMetricValue(nodeMetrics, core.MetricNodeMemoryUtilization).FloatValue),
+		CpuCoreUtilization: getCoreValues(nodeMetrics),
 	}
 	glog.V(2).Infoln("Sending nodeStat to nodeStatChan", nodeStats)
 	sink.nodeStatChan <- nodeStats
@@ -169,6 +171,19 @@ func (sink *PoseidonSink) ExportData(dataBatch *core.DataBatch) {
 			continue
 		}
 	}
+}
+
+func getCoreValues(metricSet *core.MetricSet) []int64 {
+	//TODO:(shiv) Assuming 128 core to be the max core per node
+	var coreUsage []int64
+	for i := 0; i < 128; i++ {
+		if value, ok := metricSet.MetricValues["cpucore/core_"+strconv.Itoa(i)]; ok {
+			coreUsage = append(coreUsage, value.IntValue)
+		} else {
+			break
+		}
+	}
+	return coreUsage
 }
 
 func getMetricValue(metricSet *core.MetricSet, metric core.Metric) core.MetricValue {
