@@ -17,12 +17,14 @@ package summary
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"time"
 
 	. "k8s.io/heapster/metrics/core"
 	"k8s.io/heapster/metrics/sources/kubelet"
 
 	"github.com/golang/glog"
+	cadvisor "github.com/google/cadvisor/info/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/labels"
 	kube_client "k8s.io/client-go/kubernetes"
@@ -157,6 +159,7 @@ func (this *summaryMetricsSource) decodeNodeStats(metrics map[string]*MetricSet,
 
 	this.decodeUptime(nodeMetrics, node.StartTime.Time)
 	this.decodeCPUStats(nodeMetrics, node.CPU)
+	this.decodeCpuCoreStats(nodeMetrics, node.CPUPerCore)
 	this.decodeMemoryStats(nodeMetrics, node.Memory)
 	this.decodeNetworkStats(nodeMetrics, node.Network)
 	this.decodeFsStats(nodeMetrics, RootFsKey, node.Fs)
@@ -239,6 +242,25 @@ func (this *summaryMetricsSource) decodeCPUStats(metrics *MetricSet, cpu *stats.
 	}
 
 	this.addIntMetric(metrics, &MetricCpuUsage, cpu.UsageCoreNanoSeconds)
+}
+
+func (this *summaryMetricsSource) decodeCpuCoreStats(metrics *MetricSet, coreStats *cadvisor.CpuStats) {
+	if coreStats == nil {
+		glog.V(9).Infof("missing cpu core usage metric!")
+		return
+	}
+	for index, value := range coreStats.Usage.PerCpu {
+		MetricCpuCoreUsage := Metric{
+			MetricDescriptor: MetricDescriptor{
+				Name:        "cpucore/core_" + strconv.Itoa(index),
+				Description: "CPU core usage in nanocores.",
+				Type:        MetricGauge,
+				ValueType:   ValueInt64,
+				Units:       UnitsCount,
+			},
+		}
+		this.addIntMetric(metrics, &MetricCpuCoreUsage, &value)
+	}
 }
 
 func (this *summaryMetricsSource) decodeMemoryStats(metrics *MetricSet, memory *stats.MemoryStats) {

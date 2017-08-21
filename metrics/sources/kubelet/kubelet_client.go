@@ -145,7 +145,6 @@ func (self *KubeletClient) GetSummary(host Host) (*stats.Summary, error) {
 	if self.config != nil && self.config.EnableHttps {
 		url.Scheme = "https"
 	}
-
 	req, err := http.NewRequest("GET", url.String(), nil)
 	if err != nil {
 		return nil, err
@@ -156,6 +155,30 @@ func (self *KubeletClient) GetSummary(host Host) (*stats.Summary, error) {
 		client = http.DefaultClient
 	}
 	err = self.postRequestAndGetValue(client, req, summary)
+	self.GetCPUCoreStats(host, summary)
+	return summary, err
+}
+
+func (self *KubeletClient) GetCPUCoreStats(host Host, summary *stats.Summary) (*stats.Summary, error) {
+	url := url.URL{
+		Scheme: "http",
+		Host:   fmt.Sprintf("%s:%d", host.IP, host.Port),
+		Path:   "/stats",
+	}
+	if self.config != nil && self.config.EnableHttps {
+		url.Scheme = "https"
+	}
+	req, err := http.NewRequest("GET", url.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	cpuCoreStats := &cadvisor.ContainerInfo{}
+	client := self.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	err = self.postRequestAndGetValue(client, req, cpuCoreStats)
+	summary.Node.CPUPerCore = &cpuCoreStats.Stats[len(cpuCoreStats.Stats)-1].Cpu
 	return summary, err
 }
 

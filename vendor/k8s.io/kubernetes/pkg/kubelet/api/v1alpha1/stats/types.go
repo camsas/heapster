@@ -17,6 +17,7 @@ limitations under the License.
 package stats
 
 import (
+	cadvisor "github.com/google/cadvisor/info/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -43,7 +44,8 @@ type NodeStats struct {
 	CPU *CPUStats `json:"cpu,omitempty"`
 	// Stats pertaining to memory (RAM) resources.
 	// +optional
-	Memory *MemoryStats `json:"memory,omitempty"`
+	CPUPerCore *cadvisor.CpuStats `json:"cpupercore,omitempty"`
+	Memory     *MemoryStats       `json:"memory,omitempty"`
 	// Stats pertaining to network resources.
 	// +optional
 	Network *NetworkStats `json:"network,omitempty"`
